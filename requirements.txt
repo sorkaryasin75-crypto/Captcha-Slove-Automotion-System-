@@ -1,4 +1,4 @@
 aiogram==2.25.1
 requests==2.31.0
-twocaptcha==1.0.2
+2captcha-python
 aiohttp==3.9.1
