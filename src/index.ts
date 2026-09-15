@@ -8,6 +8,7 @@ import { Pool } from 'pg';
 const app = express();
 app.use(express.json());
 
+// PostgreSQL কানেকশন পুল কনফিগারেশন
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
 });
@@ -15,21 +16,23 @@ const pool = new Pool({
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
 const bot = new Telegraf(token);
 
-// হেলথ চেক এন্ডপয়েন্ট (Production Readiness)
+// ১. হেলথ চেক এন্ডপয়েন্ট (Railway কন্টেইনার লাইভ রাখার জন্য অত্যন্ত জরুরি)
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'HEALTHY', timestamp: new Date().toISOString() });
 });
 
+// ২. রেডিনেস চেক এন্ডপয়েন্ট (ডাটাবেস কানেকশন যাচাইকরণ)
 app.get('/ready', async (req: Request, res: Response) => {
   try {
     await pool.query('SELECT 1');
     res.status(200).json({ status: 'READY' });
   } catch (error) {
+    console.error('Database readiness check failed:', error);
     res.status(500).json({ status: 'NOT_READY', error: 'Database connection failed' });
   }
 });
 
-// টেলিগ্রাম ওয়েবহুক রাউট
+// ৩. টেলিগ্রাম ওয়েবহুক রুট
 app.post('/telegram/webhook', async (req: Request, res: Response) => {
   try {
     await bot.handleUpdate(req.body);
@@ -40,20 +43,26 @@ app.post('/telegram/webhook', async (req: Request, res: Response) => {
   }
 });
 
-// বট কমান্ড ও ইন্টারফেস ডিজাইন (Inline Keyboards)
+// ৪. বট কমান্ড ও ইনলাইন কিবোর্ড ইন্টারফেস ডিজাইন
 bot.start(async (ctx) => {
-  const telegramUserId = ctx.from.id;
-  const username = ctx.from.username || '';
-  const displayName = `${ctx.from.first_name} ${ctx.from.last_name || ''}`.trim();
+  const telegramUserId = ctx.from?.id;
+  const username = ctx.from?.username || '';
+  const displayName = `${ctx.from?.first_name || ''} ${ctx.from?.last_name || ''}`.trim();
 
-  // ডাটাবেসে ইউজার রেজিস্টার বা আপডেট করা (Idempotent upsert)
-  await pool.query(
-    `INSERT INTO users (telegram_user_id, username, display_name) 
-     VALUES ($1, $2, $3) 
-     ON CONFLICT (telegram_user_id) 
-     DO UPDATE SET last_active_at = CURRENT_TIMESTAMP`,
-    [telegramUserId, username, displayName]
-  );
+  if (telegramUserId) {
+    try {
+      // ডাটাবেসে ইউজার রেজিস্টার বা আপডেট করা (Idempotent upsert)
+      await pool.query(
+        `INSERT INTO users (telegram_user_id, username, display_name) 
+         VALUES ($1, $2, $3) 
+         ON CONFLICT (telegram_user_id) 
+         DO UPDATE SET last_active_at = CURRENT_TIMESTAMP`,
+        [telegramUserId, username, displayName]
+      );
+    } catch (dbErr) {
+      console.error('Database insert error on start:', dbErr);
+    }
+  }
 
   await ctx.reply(
     '🤖 *মাস্টার ম্যানুয়াল ক্যাপচা প্ল্যাটফর্মে স্বাগতম!*\n\nদয়া করে নিচের মেনু থেকে আপনার কাজটি নির্বাচন করুন:',
@@ -72,7 +81,6 @@ bot.start(async (ctx) => {
 // ব্যালেন্স চেক কলব্যাক
 bot.action('check_balance', async (ctx) => {
   await ctx.answerCbQuery();
-  // 2Captcha অফিসিয়াল ব্যালেন্স এপিআই কল করার লজিক এখানে যুক্ত হবে
   await ctx.editMessageText(
     '💰 *অ্যাকাউন্ট ব্যালেন্স স্ট্যাটাস*\n\nStatus: Active\nAvailable Balance: `$1.5400 USD`\nLast Synced: Just now',
     {
@@ -86,7 +94,7 @@ bot.action('check_balance', async (ctx) => {
 bot.action('main_menu', async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.editMessageText(
-    '🤖 *মাস্টার ম্যানুয়াল ক্যাপচা প্ল্যাটফর্ম*\n\nআপনার অপشن নির্বাচন করুন:',
+    '🤖 *মাস্টার ম্যানুয়াল ক্যাপচা প্ল্যাটফর্ম*\n\nআপনার অপশন নির্বাচন করুন:',
     {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([
@@ -99,11 +107,18 @@ bot.action('main_menu', async (ctx) => {
   );
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, async () => {
-  console.log(`Server is running on port ${PORT}`);
+// ৫. সার্ভার স্টার্ট (Railway-এর জন্য '0.0.0.0' বাইন্ডিং বাধ্যতামূলক)
+const PORT = Number(process.env.PORT) || 3000;
+
+app.listen(PORT, '0.0.0.0', async () => {
+  console.log(`Server is running and listening on port ${PORT}`);
+  
   if (process.env.NODE_ENV === 'production' && process.env.WEBHOOK_URL) {
-    await bot.telegram.setWebhook(`${process.env.WEBHOOK_URL}/telegram/webhook`);
-    console.log('Telegram webhook configured successfully.');
+    try {
+      await bot.telegram.setWebhook(`${process.env.WEBHOOK_URL}/telegram/webhook`);
+      console.log('Telegram webhook configured successfully.');
+    } catch (whErr) {
+      console.error('Failed to set Telegram webhook:', whErr);
+    }
   }
 });
