@@ -16,7 +16,12 @@ const pool = new Pool({
 const token = process.env.TELEGRAM_BOT_TOKEN || '';
 const bot = new Telegraf(token);
 
-// ১. হেলথ চেক এন্ডপয়েন্ট (Railway কন্টেইনার লাইভ রাখার জন্য অত্যন্ত জরুরি)
+// ০. মূল রুট এন্ডপয়েন্ট (Railway কন্টেইনার হেলথ চেক নিশ্চিত করতে এটি প্রয়োজন)
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).send('Telegram CAPTCHA Bot is active and running!');
+});
+
+// ১. হেলথ চেক এন্ডপয়েন্ট
 app.get('/health', (req: Request, res: Response) => {
   res.status(200).json({ status: 'HEALTHY', timestamp: new Date().toISOString() });
 });
@@ -51,7 +56,6 @@ bot.start(async (ctx) => {
 
   if (telegramUserId) {
     try {
-      // ডাটাবেসে ইউজার রেজিস্টার বা আপডেট করা (Idempotent upsert)
       await pool.query(
         `INSERT INTO users (telegram_user_id, username, display_name) 
          VALUES ($1, $2, $3) 
@@ -78,7 +82,6 @@ bot.start(async (ctx) => {
   );
 });
 
-// ব্যালেন্স চেক কলব্যাক
 bot.action('check_balance', async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.editMessageText(
@@ -90,7 +93,6 @@ bot.action('check_balance', async (ctx) => {
   );
 });
 
-// মেইন মেনু ব্যাক বাটন
 bot.action('main_menu', async (ctx) => {
   await ctx.answerCbQuery();
   await ctx.editMessageText(
@@ -107,7 +109,7 @@ bot.action('main_menu', async (ctx) => {
   );
 });
 
-// ৫. সার্ভার স্টার্ট (Railway-এর জন্য '0.0.0.0' বাইন্ডিং বাধ্যতামূলক)
+// ৫. সার্ভার স্টার্ট
 const PORT = Number(process.env.PORT) || 3000;
 
 app.listen(PORT, '0.0.0.0', async () => {
